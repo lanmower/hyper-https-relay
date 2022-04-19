@@ -1,5 +1,5 @@
 {
-  "name": "sni",
+  "name": "hyper-https-relay",
   "version": "0.0.1",
   "main": "server.js",
   "scripts": {
