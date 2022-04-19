@@ -1,0 +1,24 @@
+{
+  "name": "sni",
+  "version": "0.0.1",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "@hyperswarm/dht": "^5.0.24",
+    "hi-base32": "^0.5.1",
+    "http-proxy": "^1.18.1",
+    "net": "^1.0.2",
+    "pm2": "^5.2.0",
+    "pump": "^3.0.0",
+    "sni": "^1.0.0"
+  },
+  "engines": {
+    "node": "14.x"
+  },
+  "repository": {
+    "url": "https://glitch.com/edit/#!/glitch-hello-node"
+  },
+  "license": "MIT"
+}
