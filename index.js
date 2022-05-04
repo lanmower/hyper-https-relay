@@ -66,19 +66,61 @@ const getKey = (name)=>{
   return publicKey;
 }
 
-net.createServer(function(local) {
-    local.once("data", function(data) {
-        const server = sni(data);
-        if(server) {
-          const split = server.split('.');
-          if(split[split.length-3]) {
-            const publicKey = getKey(split[split.length-3]);
-                  if(!publicKey) return;
-            const socket = node.connect(publicKey);
-            socket.write('https');
-            socket.write(data);
-            pump(local, socket, local);
-          }
+net.createServer(function (local) {
+  local.once("data", async function (data) {
+    const server = sni(data);
+    if (server) {
+      const split = server.split('.');
+      if (split[split.length - 3]) {
+        let domain = await getKey(split[split.length - 3], 'mumbai');
+        console.log(domain.toString('hex'));
+        if (!domain) {
+          return;
         }
-    });
+        console.log({domain});
+        const socket = node.connect(domain);
+        socket.write('https');
+        socket.write(data);
+        pump(local, socket, local);
+      }
+    }
+  });
 }).listen(443);
+
+const validateSubdomain = (subdomain) => {
+  const MIN_LENGTH = 1;
+  const MAX_LENGTH = 63;
+  const ALPHA_NUMERIC_REGEX = /^[a-z][a-z-]*[a-z0-9]*$/;
+  const START_END_HYPHEN_REGEX = /A[^-].*[^-]z/i;
+  const reservedNames = [
+    "www",
+    "ftp",
+    "mail",
+    "pop",
+    "smtp",
+    "admin",
+    "ssl",
+    "sftp",
+    "domain"
+  ];
+  //if is reserved...
+  if (reservedNames.includes(subdomain))
+    throw new Error("cannot be a reserved name");
+
+  //if is too small or too big...
+  if (subdomain.length < MIN_LENGTH || subdomain.length > MAX_LENGTH)
+    throw new Error(
+      `must have between ${MIN_LENGTH} and ${MAX_LENGTH} characters`
+    );
+
+  //if subdomain is started/ended with hyphen or is not alpha numeric
+  if (!ALPHA_NUMERIC_REGEX.test(subdomain) || START_END_HYPHEN_REGEX.test(subdomain))
+    throw new Error(
+      subdomain.indexOf("-") === 0 ||
+        subdomain.indexOf("-") === subdomain.length - 1
+        ? "cannot start or end with a hyphen"
+        : "must be alphanumeric (or hyphen)"
+    );
+
+  return true;
+};
