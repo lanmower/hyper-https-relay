@@ -3,11 +3,15 @@ const net = require("net");
 const b32 = require("hi-base32");
 const DHT = require("@hyperswarm/dht");
 const pump = require('pump')
-const node = new DHT({});
-
+const node = new DHT();
+const fs = require('fs');
 const http = require('http');
 const httpProxy = require('http-proxy');
-
+async function toArray(iterable) {
+  const result = []
+  for await (const data of iterable) result.push(data)
+  return result
+}
 let mod = 0;
 const tunnels = {};
 const agent = new http.Agent(
@@ -24,25 +28,26 @@ var proxy = httpProxy.createProxyServer({
   timeout: 360000
 });
 const doServer = async function (req, res) {
-        console.log(req.headers);
-  if(!req.headers.host) return;
+  if (!req.headers.host) return;
   const split = req.headers.host.split('.');
-  const publicKey = await getKey(split[split.length-3]);
+  let publicKey = split[split.length - 3];
+  if(publicKey == 'sites') publicKey = split[split.length - 4];
+  publicKey = await getKey(publicKey);
   if (!tunnels[publicKey]) {
     const port = 1337 + ((mod++) % 1000);
     try {
-        var server = net.createServer(function (local) {
-          const socket = node.connect(publicKey);
-          socket.write('http');
-          pump(local, socket, local);
-        });
-        server.listen(port, "127.0.0.1");
-        tunnels[publicKey] = port;
-        target = 'http://127.0.0.1:' + port;
-      } catch(e) {
-        console.trace(e);
-        console.error(e);
-      }
+      var server = net.createServer(function (local) {
+        const socket = node.connect(publicKey);
+        socket.write('http');
+        pump(local, socket, local);
+      });
+      server.listen(port, "127.0.0.1");
+      tunnels[publicKey] = port;
+      target = 'http://127.0.0.1:' + port;
+    } catch (e) {
+      console.trace(e);
+      console.error(e);
+    }
   } else {
     target = 'http://127.0.0.1:' + tunnels[publicKey]
   }
@@ -56,13 +61,65 @@ const doServer = async function (req, res) {
 }
 var server = http.createServer(doServer);
 server.listen(80);
-const getKey = (name)=>{
+const known = {};
+const getKey = async (name) => {
   let publicKey;
   let decoded = '';
-  try {decoded = b32.decode.asBytes(name.toUpperCase())} catch (e) {
-          console.error(e)
+  try { decoded = b32.decode.asBytes(name.toUpperCase()) } catch (e) {
+    console.error(e)
   }
   if (decoded.length == 32) publicKey = Buffer.from(decoded);
+  else {
+    console.log(name, 'is not a key');
+    if(!known[name]) {
+      try {
+        known[name] = JSON.parse(fs.readFileSync('known/'+name));
+        known[name].key = Buffer.from(known[name].keyback, 'hex');
+      } catch(e) {
+        console.log('not read from file', e);
+      }
+    }
+    if(known[name] && new Date().getTime() - known[name].last < 15*60*1000) {
+      console.log('cached from file');
+            return known[name].key;
+    }
+    console.log('trying to look it up')
+    const target = DHT.hash(Buffer.from(name));
+    console.log("hash is:", name);
+    const result = await toArray(node.lookup(target));
+    if (result.length > 0) {
+      if(known[name]) {
+        let foundknown;
+        for(res of result) {
+          for(peer of res.peers) {
+              if(known[name.key] == peer.publicKey) {
+                known[name].last = new Date().getTime();
+                foundknown = true;
+                known[name].keyback =known[name].key.toString('hex');
+                fs.writeFileSync('known/'+name, JSON.stringify(known[name]));
+              }
+          }
+        }
+        if(!foundknown && new Date().getTime() - known[name].last > 60*60^1000*2                                                                                                                                                             4) {
+          known[name].key = Buffer.from(result[0].peers[0].publicKey);
+          known[name].last = new Date().getTime();
+          known[name].keyback =known[name].key.toString('hex');
+          fs.writeFileSync('known/'+name, JSON.stringify(known[name]));
+        }
+      } else {
+        known[name]={};
+        known[name].key = Buffer.from(result[0].peers[0].publicKey);
+        known[name].last = new Date().getTime();
+        known[name].keyback =known[name].key.toString('hex');
+        fs.writeFileSync('known/'+name, JSON.stringify(known[name]));
+      }
+      console.log(known[name].key);
+      if(known[name]) return known[name].key;
+    } else {
+      console.log('no results');
+    }
+  }
+
   return publicKey;
 }
 
@@ -72,13 +129,12 @@ net.createServer(function (local) {
     if (server) {
       const split = server.split('.');
       if (split[split.length - 3]) {
-        let domain = await getKey(split[split.length - 3], 'mumbai');
-        console.log(domain.toString('hex'));
-        if (!domain) {
-          return;
-        }
-        console.log({domain});
-        const socket = node.connect(domain);
+          let publicKey = split[split.length - 3];
+          if(publicKey == 'sites') publicKey = split[split.length - 4];
+          publicKey = await getKey(publicKey);
+        if (!publicKey) return;
+        //console.log(publicKey);
+        const socket = node.connect(publicKey);
         socket.write('https');
         socket.write(data);
         pump(local, socket, local);
@@ -86,41 +142,4 @@ net.createServer(function (local) {
     }
   });
 }).listen(443);
-
-const validateSubdomain = (subdomain) => {
-  const MIN_LENGTH = 1;
-  const MAX_LENGTH = 63;
-  const ALPHA_NUMERIC_REGEX = /^[a-z][a-z-]*[a-z0-9]*$/;
-  const START_END_HYPHEN_REGEX = /A[^-].*[^-]z/i;
-  const reservedNames = [
-    "www",
-    "ftp",
-    "mail",
-    "pop",
-    "smtp",
-    "admin",
-    "ssl",
-    "sftp",
-    "domain"
-  ];
-  //if is reserved...
-  if (reservedNames.includes(subdomain))
-    throw new Error("cannot be a reserved name");
-
-  //if is too small or too big...
-  if (subdomain.length < MIN_LENGTH || subdomain.length > MAX_LENGTH)
-    throw new Error(
-      `must have between ${MIN_LENGTH} and ${MAX_LENGTH} characters`
-    );
-
-  //if subdomain is started/ended with hyphen or is not alpha numeric
-  if (!ALPHA_NUMERIC_REGEX.test(subdomain) || START_END_HYPHEN_REGEX.test(subdomain))
-    throw new Error(
-      subdomain.indexOf("-") === 0 ||
-        subdomain.indexOf("-") === subdomain.length - 1
-        ? "cannot start or end with a hyphen"
-        : "must be alphanumeric (or hyphen)"
-    );
-
-  return true;
-};
+console.log('created server')
